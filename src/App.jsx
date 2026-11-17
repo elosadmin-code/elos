@@ -70,6 +70,7 @@ export default function App() {
             contacts={contacts}
             loading={contactsLoading}
             onSelectContact={setSelectedContact}
+            onNavigate={setPage}
           />
         )}
         {page === 'contacts' && (

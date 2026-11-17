@@ -18,6 +18,7 @@
   gap: 6px;
 }
 .stat-card:hover { border-color: var(--accent); }
+.stat-clickable { cursor: pointer; }
 
 .stat-value {
   font-family: 'Outfit', sans-serif;

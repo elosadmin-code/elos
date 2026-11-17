@@ -1,7 +1,7 @@
 import { getCadenceStatus, getInitials } from '../lib/cadence'
 import './Dashboard.css'
 
-export default function Dashboard({ contacts, loading, onSelectContact }) {
+export default function Dashboard({ contacts, loading, onSelectContact, onNavigate }) {
   if (loading) {
     return <div className="page"><div className="page-loading">Carregando...</div></div>
   }
@@ -25,10 +25,10 @@ export default function Dashboard({ contacts, loading, onSelectContact }) {
       </div>
 
       <div className="stat-grid">
-        <StatCard label="Contatos"       value={contacts.length} />
-        <StatCard label="Atrasados"      value={overdue.length}  accent="red" />
-        <StatCard label="Hoje"           value={today.length}    accent="amber" />
-        <StatCard label="Esta semana"    value={soon.length}     accent="green" />
+        <StatCard label="Contatos"    value={contacts.length} onClick={() => onNavigate('contacts')} />
+        <StatCard label="Atrasados"   value={overdue.length}  accent="red"   onClick={() => onNavigate('cadences')} />
+        <StatCard label="Hoje"        value={today.length}    accent="amber" onClick={() => onNavigate('cadences')} />
+        <StatCard label="Esta semana" value={soon.length}     accent="green" onClick={() => onNavigate('cadences')} />
       </div>
 
       {urgent.length > 0 && (
@@ -84,9 +84,9 @@ export default function Dashboard({ contacts, loading, onSelectContact }) {
   )
 }
 
-function StatCard({ label, value, accent }) {
+function StatCard({ label, value, accent, onClick }) {
   return (
-    <div className={`stat-card${accent ? ` stat-${accent}` : ''}`}>
+    <div className={`stat-card${accent ? ` stat-${accent}` : ''}${onClick ? ' stat-clickable' : ''}`} onClick={onClick}>
       <div className="stat-value">{value}</div>
       <div className="stat-label">{label}</div>
     </div>
