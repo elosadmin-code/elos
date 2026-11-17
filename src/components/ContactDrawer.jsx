@@ -4,6 +4,7 @@ import { getCadenceStatus, getInitials, formatDate } from '../lib/cadence'
 import './ContactDrawer.css'
 
 const INTERVAL_OPTIONS = [
+  { value: 3,  label: '3 dias — Contato ativo' },
   { value: 7,  label: '7 dias — Semanal' },
   { value: 14, label: '14 dias — Quinzenal' },
   { value: 21, label: '21 dias — 3 semanas' },
@@ -359,6 +360,7 @@ function AddCadenceForm({ contact, userId, onRefresh }) {
         <label>Frequência de contato</label>
         <select value={interval} onChange={(e) => setInterval(parseInt(e.target.value))}>
           {[
+            { value: 3,  label: '3 dias — Contato ativo' },
             { value: 7,  label: '7 dias — Semanal' },
             { value: 14, label: '14 dias — Quinzenal' },
             { value: 21, label: '21 dias — 3 semanas' },
