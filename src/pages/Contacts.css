@@ -1,0 +1,103 @@
+/* ── Header ────────────────────────────────────────────────── */
+.page-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 20px;
+  flex-wrap: wrap; gap: 12px;
+}
+.btn-primary {
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: 8px;
+  padding: 9px 16px;
+  font-size: 13px; font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  font-family: 'Outfit', sans-serif;
+}
+.btn-primary:hover { opacity: 0.85; }
+
+/* ── Search ────────────────────────────────────────────────── */
+.search-bar {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 20px;
+  color: var(--text-muted);
+}
+.search-bar:focus-within { border-color: var(--accent); }
+.search-bar input {
+  flex: 1; background: none; border: none; outline: none;
+  font-size: 14px; color: var(--text);
+  font-family: 'Outfit', sans-serif;
+}
+.search-bar input::placeholder { color: var(--text-muted); }
+.search-clear {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-muted); font-size: 12px; padding: 0;
+  line-height: 1;
+}
+.search-clear:hover { color: var(--text); }
+
+/* ── Grid ──────────────────────────────────────────────────── */
+.contacts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+/* ── Card ──────────────────────────────────────────────────── */
+.contact-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex; align-items: flex-start; gap: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.contact-card:hover {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+.card-av {
+  width: 42px; height: 42px; flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 600;
+  color: var(--accent);
+}
+.card-body { flex: 1; min-width: 0; }
+.card-name {
+  font-size: 14px; font-weight: 600;
+  color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  margin-bottom: 2px;
+}
+.card-sub {
+  font-size: 12px; color: var(--text-muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  margin-bottom: 8px;
+}
+.card-badge {
+  display: inline-block;
+  font-size: 10px; font-weight: 600;
+  padding: 2px 7px; border-radius: 20px;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.badge-overdue { background: rgba(224,92,92,0.15); color: var(--red); }
+.badge-today   { background: rgba(212,168,67,0.15); color: var(--amber); }
+.badge-soon    { background: rgba(76,175,125,0.12); color: var(--green); }
+.badge-ok      { background: rgba(76,175,125,0.08); color: var(--green); }
+.badge-never   { background: var(--surface-2); color: var(--text-muted); }
+
+.card-last {
+  display: flex; flex-direction: column; align-items: flex-end;
+  gap: 2px; flex-shrink: 0;
+}
+.card-last-label { font-size: 10px; color: var(--text-muted); white-space: nowrap; }
+.card-last-date  { font-size: 11px; color: var(--text); font-weight: 500; }
