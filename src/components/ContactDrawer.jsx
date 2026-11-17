@@ -86,18 +86,25 @@ export default function ContactDrawer({ contact, onClose, onRefresh, userId }) {
           role: form.role.trim(),
           whatsapp: form.whatsapp.trim(),
           notes: form.notes.trim(),
-          tags: [],
         })
         .select()
         .single()
 
-      if (!error && newContact) {
-        await supabase.from('cadences').insert({
+      if (error) {
+        console.error('Erro ao salvar contato:', error)
+        alert('Erro ao salvar: ' + error.message)
+        return
+      }
+
+      if (newContact) {
+        const { error: cadErr } = await supabase.from('cadences').insert({
           contact_id: newContact.id,
           user_id: userId,
           interval_days: form.interval_days,
         })
+        if (cadErr) console.error('Erro na cadência:', cadErr)
       }
+
       await onRefresh()
       onClose()
     } finally {
