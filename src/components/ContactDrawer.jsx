@@ -285,7 +285,7 @@ export default function ContactDrawer({ contact, onClose, onRefresh, userId }) {
           {tab === 'cadencia' && !isNew && (
             <div className="cadence-section">
               {!cadence ? (
-                <p className="empty-hint">Nenhuma cadência configurada.</p>
+                <AddCadenceForm contact={contact} userId={userId} onRefresh={onRefresh} />
               ) : (
                 <>
                   <div className="cadence-card">
@@ -330,6 +330,49 @@ export default function ContactDrawer({ contact, onClose, onRefresh, userId }) {
         </div>
       </aside>
     </>
+  )
+}
+
+function AddCadenceForm({ contact, userId, onRefresh }) {
+  const [interval, setInterval] = useState(30)
+  const [saving, setSaving] = useState(false)
+
+  async function handleAdd() {
+    setSaving(true)
+    try {
+      const { error } = await supabase.from('cadences').insert({
+        contact_id: contact.id,
+        user_id: userId,
+        interval_days: interval,
+      })
+      if (error) { alert('Erro: ' + error.message); return }
+      await onRefresh()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="add-cadence-form">
+      <p className="empty-hint" style={{ marginBottom: 16 }}>Nenhuma cadência configurada.</p>
+      <div className="form-group">
+        <label>Frequência de contato</label>
+        <select value={interval} onChange={(e) => setInterval(parseInt(e.target.value))}>
+          {[
+            { value: 7,  label: '7 dias — Semanal' },
+            { value: 14, label: '14 dias — Quinzenal' },
+            { value: 21, label: '21 dias — 3 semanas' },
+            { value: 30, label: '30 dias — Mensal' },
+            { value: 45, label: '45 dias — 6 semanas' },
+            { value: 60, label: '60 dias — Bimestral' },
+            { value: 90, label: '90 dias — Trimestral' },
+          ].map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      </div>
+      <button className="save-btn" onClick={handleAdd} disabled={saving}>
+        {saving ? 'Salvando...' : 'Configurar cadência'}
+      </button>
+    </div>
   )
 }
 
