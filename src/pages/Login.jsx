@@ -23,7 +23,7 @@ export default function Login() {
       } else {
         const { error } = await supabase.auth.signUp({ email, password })
         if (error) setError(translateError(error.message))
-        else setMessage('Conta criada com sucesso.')
+        else setMessage('Conta criada! Verifique seu email para confirmar o cadastro antes de entrar.')
       }
     } catch {
       setError('Erro inesperado. Tente novamente.')

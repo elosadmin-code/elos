@@ -27,6 +27,11 @@ export default function Settings({ user }) {
     setWaMsg('')
     try {
       const clean = whatsapp.replace(/\D/g, '')
+      if (clean.length < 10 || clean.length > 13) {
+        setWaMsg('Número inválido. Use o formato: 5511999998888')
+        setSavingWa(false)
+        return
+      }
       const { error } = await supabase
         .from('profiles')
         .upsert({ id: user.id, whatsapp_number: clean }, { onConflict: 'id' })
