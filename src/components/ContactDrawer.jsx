@@ -14,7 +14,7 @@ const INTERVAL_OPTIONS = [
   { value: 90, label: '90 dias — Trimestral' },
 ]
 
-const emptyForm = { name: '', company: '', role: '', whatsapp: '', notes: '', interval_days: 30 }
+const emptyForm = { name: '', company: '', role: '', whatsapp: '', notes: '', tags: '', interval_days: 30 }
 
 export default function ContactDrawer({ contact, onClose, onRefresh, userId }) {
   const [tab, setTab] = useState('perfil')
@@ -93,6 +93,7 @@ export default function ContactDrawer({ contact, onClose, onRefresh, userId }) {
           role: form.role.trim(),
           whatsapp: form.whatsapp.trim(),
           notes: form.notes.trim(),
+          tags: form.tags?.trim() || '',
         })
         .select()
         .single()
@@ -130,8 +131,15 @@ export default function ContactDrawer({ contact, onClose, onRefresh, userId }) {
         role: editForm.role?.trim() || '',
         whatsapp: editForm.whatsapp?.trim() || '',
         notes: editForm.notes?.trim() || '',
+        tags: editForm.tags?.trim() || '',
       }).eq('id', contact.id)
       if (error) { alert('Erro ao salvar: ' + error.message); return }
+      const existingCadence = contact.cadences?.[0]
+      if (existingCadence) {
+        await supabase.from('cadences').update({ interval_days: editForm.interval_days }).eq('id', existingCadence.id)
+      } else {
+        await supabase.from('cadences').insert({ contact_id: contact.id, user_id: userId, interval_days: editForm.interval_days })
+      }
       setIsEditing(false)
       await onRefresh()
     } finally {
@@ -222,6 +230,7 @@ export default function ContactDrawer({ contact, onClose, onRefresh, userId }) {
                   {contact?.role && <InfoRow label="Cargo" value={contact.role} />}
                   {contact?.whatsapp && <InfoRow label="WhatsApp" value={contact.whatsapp} />}
                   {contact?.notes && <InfoRow label="Notas" value={contact.notes} />}
+                  {contact?.tags && <InfoRow label="Tags" value={contact.tags} />}
                 </div>
               ) : (
                 <p className="empty-hint">Nenhuma informação adicional.</p>
@@ -236,7 +245,7 @@ export default function ContactDrawer({ contact, onClose, onRefresh, userId }) {
                   </button>
                 )}
                 <button className="edit-contact-btn" onClick={() => {
-                  setEditForm({ name: contact.name || '', company: contact.company || '', role: contact.role || '', whatsapp: contact.whatsapp || '', notes: contact.notes || '' })
+                  setEditForm({ name: contact.name || '', company: contact.company || '', role: contact.role || '', whatsapp: contact.whatsapp || '', notes: contact.notes || '', tags: contact.tags || '', interval_days: contact.cadences?.[0]?.interval_days || 30 })
                   setIsEditing(true)
                 }}>
                   Editar contato
@@ -309,6 +318,25 @@ export default function ContactDrawer({ contact, onClose, onRefresh, userId }) {
                   rows={3}
                 />
               </div>
+              <div className="form-group">
+                <label>Tags</label>
+                <input
+                  value={editForm.tags || ''}
+                  onChange={(e) => setEditForm((f) => ({ ...f, tags: e.target.value }))}
+                  placeholder="prospect, cliente, parceiro..."
+                />
+              </div>
+              <div className="form-group">
+                <label>Cadência de contato</label>
+                <select
+                  value={editForm.interval_days || 30}
+                  onChange={(e) => setEditForm((f) => ({ ...f, interval_days: parseInt(e.target.value) }))}
+                >
+                  {INTERVAL_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
               <div className="edit-form-actions">
                 <button type="submit" className="save-btn" disabled={!editForm.name?.trim() || saving}>
                   {saving ? 'Salvando...' : 'Salvar'}
@@ -376,6 +404,14 @@ export default function ContactDrawer({ contact, onClose, onRefresh, userId }) {
                   onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
                   placeholder="Como conheceu, interesses, contexto..."
                   rows={3}
+                />
+              </div>
+              <div className="form-group">
+                <label>Tags</label>
+                <input
+                  value={form.tags || ''}
+                  onChange={(e) => setForm((f) => ({ ...f, tags: e.target.value }))}
+                  placeholder="prospect, cliente, parceiro..."
                 />
               </div>
               <button type="submit" className="save-btn" disabled={!form.name.trim() || saving}>
