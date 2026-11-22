@@ -351,3 +351,109 @@
   text-align: center;
   padding: 32px 0;
 }
+
+/* ── Perfil actions (edit / delete) ── */
+.perfil-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.edit-contact-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 16px;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.edit-contact-btn:hover { background: var(--border); border-color: var(--accent); }
+
+.delete-contact-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 16px;
+  background: none;
+  color: var(--red, #e05c5c);
+  border: 1px solid rgba(224, 92, 92, 0.3);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.delete-contact-btn:hover { background: rgba(224, 92, 92, 0.08); border-color: var(--red, #e05c5c); }
+
+.confirm-delete-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  background: rgba(224, 92, 92, 0.07);
+  border: 1px solid rgba(224, 92, 92, 0.25);
+  border-radius: 8px;
+}
+.confirm-delete-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--red, #e05c5c);
+}
+.confirm-delete-btns {
+  display: flex;
+  gap: 8px;
+}
+.btn-confirm-del {
+  flex: 1;
+  padding: 8px 12px;
+  background: var(--red, #e05c5c);
+  color: #fff;
+  border: none;
+  border-radius: 7px;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.btn-confirm-del:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-confirm-del:hover:not(:disabled) { opacity: 0.85; }
+.btn-cancel-del {
+  flex: 1;
+  padding: 8px 12px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.btn-cancel-del:hover { background: var(--border); }
+
+/* ── Edit form action buttons ── */
+.edit-form-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+.edit-form-actions .save-btn { flex: 1; }
+.cancel-edit-btn {
+  padding: 11px 16px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+.cancel-edit-btn:hover { background: var(--border); }
