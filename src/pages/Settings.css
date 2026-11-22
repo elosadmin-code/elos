@@ -56,3 +56,64 @@
   white-space: nowrap;
 }
 .btn-danger:hover { background: rgba(224,92,92,0.25); }
+
+/* WhatsApp section */
+.settings-wa-block {
+  padding: 16px;
+}
+.settings-wa-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin: 0 0 12px;
+}
+.settings-wa-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.settings-wa-input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 12px;
+  font-size: 14px;
+  color: var(--text);
+  font-family: 'Outfit', sans-serif;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.settings-wa-input:focus {
+  border-color: var(--accent);
+}
+.settings-wa-input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+.settings-wa-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 9px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: 'Outfit', sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.15s;
+}
+.settings-wa-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.settings-wa-btn:not(:disabled):hover {
+  opacity: 0.85;
+}
+.settings-wa-msg {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+.settings-wa-msg.success { color: var(--green, #4caf7d); }
+.settings-wa-msg.error   { color: var(--red); }
