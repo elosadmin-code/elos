@@ -40,6 +40,13 @@ serve(async (req) => {
     console.log('[ELOS] channel_id:', body.channel_id)
     console.log('[ELOS] messageEventType:', raw.messageEventType)
 
+    // Skip non-MESSAGE events (Z-API fires multiple events per message: received, read, delivered, etc.)
+    const eventType = raw.messageEventType || raw.type || ''
+    if (eventType && eventType !== 'ReceivedCallback' && eventType !== 'message' && eventType !== '') {
+      console.log('[ELOS] Pulando: evento não é mensagem recebida:', eventType)
+      return ok({ skipped: 'non_message_event', eventType })
+    }
+
     // Skip outgoing messages (sent by the business)
     if (body.created_by === 'API' || body.created_by === 'SYSTEM' || body.direction === 'OUTGOING') {
       console.log('[ELOS] Pulando: mensagem enviada pela empresa')
