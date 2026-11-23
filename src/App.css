@@ -32,3 +32,20 @@
   min-width: 0;
   background: var(--bg);
 }
+
+/* ── Mobile layout ───────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .app-shell {
+    flex-direction: column;
+    height: 100%;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
+  .app-main {
+    flex: 1;
+    overflow-y: auto;
+    /* make room for the fixed bottom nav */
+    padding-bottom: calc(60px + env(safe-area-inset-bottom, 0px));
+  }
+}

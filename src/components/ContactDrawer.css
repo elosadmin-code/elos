@@ -457,3 +457,12 @@
   white-space: nowrap;
 }
 .cancel-edit-btn:hover { background: var(--border); }
+
+/* ── Mobile: drawer goes full-width ─────────── */
+@media (max-width: 640px) {
+  .drawer {
+    width: 100%;
+    top: 0;
+    bottom: 60px; /* above bottom nav */
+  }
+}
