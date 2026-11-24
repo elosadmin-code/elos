@@ -40,6 +40,10 @@ serve(async (req) => {
     console.log('[ELOS] channel_id:', body.channel_id)
     console.log('[ELOS] messageEventType:', raw.messageEventType)
 
+    // Extract unique message ID for deduplication (Z-API replays same body on reconnect)
+    const msgId = body.id || raw.id || body.messageId || raw.messageId || body.message_id || ''
+    console.log('[ELOS] messageId:', msgId)
+
     // Skip non-MESSAGE events (Z-API fires multiple events per message: received, read, delivered, etc.)
     const eventType = raw.messageEventType || raw.type || ''
     if (eventType && eventType !== 'ReceivedCallback' && eventType !== 'message' && eventType !== '') {
@@ -196,6 +200,18 @@ serve(async (req) => {
     const userId = profile.id
     const senderName = body.sender?.name || body.sender?.pushName || senderPhone
     console.log(`[ELOS] ===PERFIL_OK=== userId: ${userId}`)
+
+    // Deduplication: skip if this exact message was already processed (Z-API webhook replay)
+    if (msgId) {
+      const { count: dupCount } = await supabase.from('contact_history')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .like('notes', `%[msgid:${msgId}]%`)
+      if (dupCount && dupCount > 0) {
+        console.log('[ELOS] Pulando: mensagem já processada (replay Z-API), msgId:', msgId)
+        return ok({ skipped: 'duplicate_message', msgId })
+      }
+    }
     console.log(`[ELOS] Msg de ${senderName} (${senderPhone}): "${messageText.slice(0, 100)}"`)
 
     const apiKey = Deno.env.get('ANTHROPIC_API_KEY')
@@ -308,9 +324,10 @@ serve(async (req) => {
     console.log('[ELOS] ===CONTATO_ID===', contactId)
 
     const now = new Date().toISOString()
+    const msgIdTag = msgId ? ` [msgid:${msgId}]` : ''
     const { data: histRecord, error: histErr } = await supabase.from('contact_history').insert({
       contact_id: contactId, user_id: userId,
-      contacted_at: now, channel: 'whatsapp', notes: parsed.note,
+      contacted_at: now, channel: 'whatsapp', notes: parsed.note + msgIdTag,
     }).select('id').single()
     if (histErr) console.error('[ELOS] ===ERRO_HISTORICO===', JSON.stringify(histErr))
     else console.log('[ELOS] ===HISTORICO_OK=== id:', histRecord?.id)
@@ -384,7 +401,7 @@ serve(async (req) => {
     // Store Z-API debug info in contact_history notes so it's visible in dashboard
     if (histRecord?.id && zapiStatus !== 'not_attempted') {
       await supabase.from('contact_history').update({
-        notes: `${parsed.note} [ZAPI:${zapiStatus}${zapiError ? ' ERR:' + zapiError.slice(0, 100) : ''}]`
+        notes: `${parsed.note} [ZAPI:${zapiStatus}${zapiError ? ' ERR:' + zapiError.slice(0, 100) : ''}]${msgIdTag}`
       }).eq('id', histRecord.id)
     }
 
