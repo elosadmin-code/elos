@@ -30,6 +30,23 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: { 'Access-Control-Allow-Origin': '*' } })
   }
+
+  // Rejeitar verbos nao esperados
+  if (req.method !== 'POST') {
+    console.warn('[ELOS] Metodo nao permitido:', req.method)
+    return new Response('Method not allowed', { status: 405 })
+  }
+
+  // Validar token da Z-API (protecao contra requisicoes externas indevidas)
+  const expectedToken = Deno.env.get('ZAPI_CLIENT_TOKEN') || ''
+  if (expectedToken) {
+    const incomingToken = req.headers.get('client-token') || ''
+    if (incomingToken !== expectedToken) {
+      console.warn('[ELOS] Token invalido rejeitado')
+      return new Response('Unauthorized', { status: 401 })
+    }
+  }
+
   try {
     const raw = await readBody(req)
     const body = raw.message || raw
