@@ -234,8 +234,83 @@ serve(async (req) => {
     console.log('[ELOS] ===LOOKUP_FIM=== profile:', profile ? profile.id : 'NULL', 'err:', profileErr ? JSON.stringify(profileErr) : 'nenhum')
 
     if (!profile) {
-      console.log(`[ELOS] Usuário não encontrado para o número: ${senderPhone}`)
-      return ok({ skipped: 'user_not_found', phone: senderPhone })
+      if (profileErr) {
+        console.error('[ELOS] erro ao buscar perfil, nao vou tentar cadastrar:', JSON.stringify(profileErr))
+        return ok({ skipped: 'profile_lookup_error' })
+      }
+      console.log(`[ELOS] Numero sem cadastro: ${senderPhone}`)
+
+      // ── Cadastro pelo proprio WhatsApp (link de convite) ─────────────────────
+      // So entra quem manda um codigo de convite valido. Convites ficam em INVITE_CODES
+      // (separados por virgula); se a variavel nao existir, vale somente "useelos".
+      const squash = (v: string) => v.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '')
+      const codes = (Deno.env.get('INVITE_CODES') || 'useelos').split(',').map((c) => squash(c)).filter(Boolean)
+      const typed = squash(messageText)
+      const validCode = codes.some((c) => typed.includes(c))
+
+      const sendOmniTo = async (text: string): Promise<boolean> => {
+        const secret = Deno.env.get('ZAPI_SECRET_KEY') || ''
+        if (!channelId || !secret) return false
+        try {
+          const r = await fetch(`https://api.omni.z-api.io/v1/channels/${channelId}/messages`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${secret}` },
+            body: JSON.stringify({ recipient: { identifier: fullPhone }, content: { type: 'TEXT', body: { message: text } } }),
+          })
+          return r.ok
+        } catch (_e) { return false }
+      }
+
+      if (!validCode) {
+        // responde no maximo uma vez por dia, para nao virar conversa com desconhecido
+        const day = new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10)
+        if (await claimMessage(`nocode:${fullPhone}:${day}`)) {
+          await sendOmniTo('Oi! Aqui é o Elos. O acesso está por convite. Se você recebeu um link de convite, é só tocar nele e enviar a mensagem que já vem escrita.')
+        }
+        return ok({ skipped: 'invite_required', phone: senderPhone })
+      }
+
+      // trava contra criacao dupla (reenvio ou duas mensagens ao mesmo tempo)
+      if (!(await claimMessage(`signup:${fullPhone}`))) {
+        return ok({ skipped: 'signup_in_progress', phone: senderPhone })
+      }
+
+      let newUserId: string | null = null
+      const createAttempts: any[] = [
+        { phone: fullPhone, phone_confirm: true, user_metadata: { source: 'whatsapp_invite' } },
+        { email: `wa${fullPhone}@whatsapp.elos.invalid`, email_confirm: true, user_metadata: { source: 'whatsapp_invite', whatsapp: fullPhone } },
+      ]
+      for (const attempt of createAttempts) {
+        const { data: created, error: cErr } = await supabase.auth.admin.createUser(attempt)
+        if (!cErr && created?.user?.id) { newUserId = created.user.id; break }
+        console.error('[ELOS] ===ERRO_CRIAR_USUARIO===', JSON.stringify(cErr)?.slice(0, 300))
+      }
+
+      if (newUserId) {
+        const { error: pErr } = await supabase.from('profiles').upsert({ id: newUserId, whatsapp_number: fullPhone }, { onConflict: 'id' })
+        if (pErr) {
+          console.error('[ELOS] ===ERRO_CRIAR_PERFIL===', JSON.stringify(pErr))
+          await supabase.auth.admin.deleteUser(newUserId)
+          newUserId = null
+        }
+      }
+
+      if (!newUserId) {
+        await supabase.from('processed_messages').delete().eq('msg_key', `signup:${fullPhone}`)
+        await sendOmniTo('Tive um problema técnico para criar seu acesso agora. Tenta enviar o convite de novo em alguns minutos.')
+        return ok({ error: 'signup_failed', phone: senderPhone })
+      }
+
+      console.log('[ELOS] ===CADASTRO_WHATSAPP_OK=== userId:', newUserId, 'phone:', fullPhone)
+      await sendOmniTo(
+        `Bem-vindo ao Elos! 👋\n\n` +
+        `Eu sou o seu assistente de relacionamento aqui no WhatsApp. Depois de falar com alguém, me conta por texto ou por áudio. Por exemplo:\n\n` +
+        `"Falei com a Ana, diretora da Lumina. Quero retomar na sexta."\n\n` +
+        `Eu registro a pessoa, guardo o contexto e te lembro de retomar na hora certa. Todo dia de manhã te mando um resumo do que pede atenção. Você também pode me pedir para ajustar o nome, o cargo ou a empresa de alguém, ou apagar um contato.\n\n` +
+        `Os contatos e as anotações que você me enviar ficam guardados só para o funcionamento do Elos e são seus. Se quiser parar ou apagar tudo, é só me avisar por aqui.\n\n` +
+        `Já pode mandar o primeiro contato.`
+      )
+      return ok({ action: 'signup', userId: newUserId })
     }
 
     const userId = profile.id
