@@ -184,7 +184,7 @@ export default function ContactDrawer({ contact, onClose, onRefresh, userId }) {
                 <div className="drawer-av">{getInitials(contact?.name || '')}</div>
                 <div>
                   <div className="drawer-contact-name">{contact?.name}</div>
-                  <div className="drawer-contact-sub">{contact?.role || contact?.company || ''}</div>
+                  <div className="drawer-contact-sub">{[contact?.role, contact?.company].filter(Boolean).join(' · ')}</div>
                 </div>
               </>
             ) : (

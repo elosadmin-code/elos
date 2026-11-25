@@ -99,7 +99,7 @@ function ContactRow({ contact, status, onClick }) {
       <div className="row-av">{getInitials(contact.name)}</div>
       <div className="row-info">
         <div className="row-name">{contact.name}</div>
-        <div className="row-sub">{contact.company || contact.role || ''}</div>
+        <div className="row-sub">{[contact.role, contact.company].filter(Boolean).join(' · ')}</div>
       </div>
       <div className={`row-badge badge-${status.type}`}>{status.label}</div>
       <div className="row-arrow">›</div>

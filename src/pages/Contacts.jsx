@@ -90,7 +90,8 @@ function ContactCard({ contact, onClick }) {
         <div className="card-name">{contact.name}</div>
         {(contact.role || contact.company) && (
           <div className="card-sub">
-            {[contact.role, contact.company].filter(Boolean).join(' · ')}
+            {contact.role && <div className="card-role">{contact.role}</div>}
+            {contact.company && <div className="card-company">{contact.company}</div>}
           </div>
         )}
         {status && (

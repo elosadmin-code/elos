@@ -80,9 +80,14 @@
 }
 .card-sub {
   font-size: 12px; color: var(--text-muted);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   margin-bottom: 8px;
+  display: flex; flex-direction: column; gap: 1px;
 }
+.card-role, .card-company {
+  overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+}
+.card-company { color: var(--accent); opacity: 0.85; }
 .card-badge {
   display: inline-block;
   font-size: 10px; font-weight: 600;

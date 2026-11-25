@@ -330,7 +330,7 @@ serve(async (req) => {
     }
 
     // Monta o conteúdo da mensagem (áudio já foi transcrito para messageText via Groq Whisper)
-    const userContent = `Mensagem de ${senderName}:\n"${messageText}"\n\n${lastCtx}\n\nResponda só com JSON no formato {"actions":[...]} contendo UMA ou MAIS ações, na ordem em que o usuário pediu (máximo 4). Tipos de ação:\n\n1) ALTERAR cadastro de um contato já existente (nome, cargo ou empresa). Também vale quando o usuário apenas INFORMA um fato que muda o cadastro, como "o Augusto também é fundador da Global Logistics" ou "a Ana agora trabalha na X". Isso NÃO é anotação:\n{"action":"update_contact","target_name":"nome ATUAL do contato como está cadastrado (se o usuário disser 'último', 'esse' ou 'este' cliente, use o nome do último contato registrado)","changes":[{"field":"name|role|company","op":"set|add|remove|clear","value":"texto ou null"}]}\nOperações: set = trocar o valor atual por outro (ex: agora trabalha na X, corrigir nome); add = ACRESCENTAR mantendo o que já existe (ex: TAMBÉM é diretor de outra empresa); remove = tirar só aquele item (ex: saiu da empresa X); clear = apagar o campo inteiro. Para name use somente set. Uma ação pode ter várias mudanças.\n\n2) APAGAR, EXCLUIR ou REMOVER um contato inteiro:\n{"action":"delete_contact","target_name":"nome do contato"}\n\n3) ANOTAÇÃO sobre uma pessoa (reunião, ligação, encontro, próximo passo):\n{"action":"note","contact_name":"nome completo","contact_phone":"telefone ou null","contact_role":"cargo ou null","contact_company":"empresa ou null","note":"resumo curto e direto do contexto e do próximo passo, SEM citar o nome do remetente e SEM repetir o nome do contato (ex: 'Retomar o assunto do encantamento amanhã às 10h')","cadence_days":numero_ou_null}\n\nRegras: se a mensagem só muda dados do cadastro, use apenas update_contact (sem note). Só inclua note junto se houver contexto além do dado cadastral. Se a mensagem tiver dois pedidos (ex: apagar um contato E ajustar outro), devolva as duas ações. Se não houver nenhuma pessoa mencionada, responda {"actions":[{"action":"ignore"}]}.`
+    const userContent = `Mensagem de ${senderName}:\n"${messageText}"\n\n${lastCtx}\n\nResponda só com JSON no formato {"actions":[...]} contendo UMA ou MAIS ações, na ordem em que o usuário pediu (máximo 4). Tipos de ação:\n\n1) ALTERAR cadastro de um contato já existente (nome, cargo ou empresa). Também vale quando o usuário apenas INFORMA um fato que muda o cadastro, como "o Augusto também é fundador da Global Logistics" ou "a Ana agora trabalha na X". Isso NÃO é anotação:\n{"action":"update_contact","target_name":"nome ATUAL do contato como está cadastrado (se o usuário disser 'último', 'esse' ou 'este' cliente, use o nome do último contato registrado)","changes":[{"field":"name|role|company","op":"set|add|remove|clear","value":"texto ou null"}]}\nOperações: set = trocar o valor atual por outro (ex: agora trabalha na X, corrigir nome); add = ACRESCENTAR mantendo o que já existe (ex: TAMBÉM é diretor de outra empresa); remove = tirar só aquele item (ex: saiu da empresa X); clear = apagar o campo inteiro. Para name use somente set. Uma ação pode ter várias mudanças. Escreva sempre o cargo em português (Founder vira Fundador, Director vira Diretor), com inicial maiúscula, e mantenha siglas como CEO e CFO.\n\n2) APAGAR, EXCLUIR ou REMOVER um contato inteiro:\n{"action":"delete_contact","target_name":"nome do contato"}\n\n3) ANOTAÇÃO sobre uma pessoa (reunião, ligação, encontro, próximo passo):\n{"action":"note","contact_name":"nome completo","contact_phone":"telefone ou null","contact_role":"cargo ou null","contact_company":"empresa ou null","note":"resumo curto e direto do contexto e do próximo passo, SEM citar o nome do remetente e SEM repetir o nome do contato (ex: 'Retomar o assunto do encantamento amanhã às 10h')","cadence_days":numero_ou_null}\n\nRegras: se a mensagem só muda dados do cadastro, use apenas update_contact (sem note). Só inclua note junto se houver contexto além do dado cadastral. Se a mensagem tiver dois pedidos (ex: apagar um contato E ajustar outro), devolva as duas ações. Se não houver nenhuma pessoa mencionada, responda {"actions":[{"action":"ignore"}]}.`
 
     const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -383,18 +383,39 @@ serve(async (req) => {
       const t = v.trim()
       return t && t.toLowerCase() !== 'null' && t.length <= 120 ? t : null
     }
+    // chave de comparacao: minuscula e sem acento ("Fundador" = "fundador")
+    const keyOf = (v: string): string => v.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim()
+    // Padroniza o cargo: ingles vira portugues, primeira letra maiuscula, siglas preservadas
+    const ROLE_MAP: Record<string, string> = {
+      'founder': 'Fundador', 'fundadora': 'Fundador', 'co-founder': 'Cofundador', 'cofounder': 'Cofundador', 'co-fundador': 'Cofundador',
+      'owner': 'Dono', 'dona': 'Dono', 'director': 'Diretor', 'diretora': 'Diretor', 'manager': 'Gerente',
+      'partner': 'Sócio', 'socia': 'Sócio', 'president': 'Presidente', 'head': 'Head',
+    }
+    const normRole = (v: any): string | null => {
+      const t = cleanVal(v)
+      if (!t) return null
+      const mapped = ROLE_MAP[keyOf(t)]
+      if (mapped) return mapped
+      if (t === t.toLowerCase()) return t.charAt(0).toUpperCase() + t.slice(1)
+      return t
+    }
+    const normCompany = (v: any): string | null => {
+      const t = cleanVal(v)
+      if (!t) return null
+      return t === t.toLowerCase() ? t.charAt(0).toUpperCase() + t.slice(1) : t
+    }
     // set = trocar | add = acrescentar | remove = tirar um item | clear = limpar o campo
     const applyOp = (current: string | null, op: string, value: string | null): string | null => {
       const list = splitVals(current)
       if (op === 'clear') return null
       if (op === 'set') return value
       if (op === 'add' && value) {
-        if (!list.some((x) => x.toLowerCase() === value.toLowerCase())) list.push(value)
+        if (!list.some((x) => keyOf(x) === keyOf(value))) list.push(value)
         return list.join(SEP) || null
       }
       if (op === 'remove' && value) {
-        const v = value.toLowerCase()
-        return list.filter((x) => !x.toLowerCase().includes(v)).join(SEP) || null
+        const v = keyOf(value)
+        return list.filter((x) => !keyOf(x).includes(v)).join(SEP) || null
       }
       return current
     }
@@ -430,7 +451,7 @@ serve(async (req) => {
       for (const ch of changes) {
         const field = ch?.field
         const op = String(ch?.op ?? 'set')
-        const val = cleanVal(ch?.value)
+        const val = field === 'role' ? normRole(ch?.value) : field === 'company' ? normCompany(ch?.value) : cleanVal(ch?.value)
         if (field === 'name') {
           if (op === 'set' && val && val !== target.name) fields.name = val
         } else if (field === 'role' || field === 'company') {
@@ -493,6 +514,8 @@ serve(async (req) => {
         return ok({ action: replies.length > 0 ? 'managed' : 'ignored', handled: replies.length })
       }
       parsed = noteAction
+      parsed.contact_role = normRole(parsed.contact_role)
+      parsed.contact_company = normCompany(parsed.contact_company)
     }
 
     if (parsed.action === 'ignore' || !parsed.note) {
