@@ -27,8 +27,10 @@
     padding: 24px 20px; -webkit-font-smoothing: antialiased;
   }
   main { width: 100%; max-width: 420px; text-align: center; }
-  .mark { width: 150px; height: auto; margin: 0 auto 28px; display: block; }
-  .tag { font-size: 12px; letter-spacing: .22em; text-transform: uppercase; color: var(--accent); margin: 0 0 18px; }
+  .mark { width: 150px; height: auto; margin: 0 auto 14px; display: block; }
+  .brand { font-size: 11.5px; letter-spacing: .32em; text-transform: uppercase; color: var(--accent); margin: 0 0 40px; padding-left: .32em; }
+  .tag { display: flex; align-items: center; justify-content: center; gap: 14px; margin: 0 0 20px; font-size: 13px; font-weight: 700; letter-spacing: .26em; text-transform: uppercase; color: var(--text); }
+  .tag::before, .tag::after { content: ""; width: 28px; height: 1px; background: var(--accent); opacity: .7; }
   h1 { font-size: 28px; line-height: 1.2; font-weight: 500; margin: 0 0 14px; text-wrap: balance; }
   p.lead { color: var(--muted); font-size: 16px; line-height: 1.55; margin: 0 0 32px; text-wrap: balance; }
   .btn {
@@ -45,6 +47,7 @@
 <body>
 <main>
   <img class="mark" src="/wordmark-brass.svg" alt="elos" />
+  <p class="brand">Relacionamento estratégico</p>
   <p class="tag">Convite</p>
   <h1>Seu assistente de relacionamento, direto no WhatsApp.</h1>
   <p class="lead">Conte com quem você falou, por texto ou áudio. O Elos registra, lembra e organiza para você.</p>
