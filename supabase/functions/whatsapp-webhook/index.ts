@@ -330,7 +330,7 @@ serve(async (req) => {
     }
 
     // Monta o conteúdo da mensagem (áudio já foi transcrito para messageText via Groq Whisper)
-    const userContent = `Mensagem de ${senderName}:\n"${messageText}"\n\n${lastCtx}\n\nEscolha UMA ação para a mensagem e responda só com o JSON dela.\n\n1) Se o usuário pedir para ALTERAR dados de um contato já cadastrado (nome, sobrenome, cargo ou empresa), isso NÃO é uma anotação:\n{"action":"update_contact","target_name":"nome ATUAL do contato como está cadastrado (se o usuário disser 'último', 'esse' ou 'este' cliente, use o nome do último contato registrado)","changes":[{"field":"name|role|company","op":"set|add|remove|clear","value":"texto ou null"}]}\nOperações: set = trocar o valor atual por outro; add = ACRESCENTAR mantendo o que já existe (ex: a pessoa também é diretora de outra empresa); remove = tirar só aquele item (ex: saiu da empresa X); clear = apagar o campo inteiro. Para name use somente set. Uma mensagem pode ter várias mudanças.\n\n2) Se o usuário pedir para APAGAR, EXCLUIR ou REMOVER um contato inteiro:\n{"action":"delete_contact","target_name":"nome do contato"}\n\n3) Caso contrário, se houver qualquer pessoa mencionada (reunião, ligação, encontro, contato), retorne:\n{"action":"note","contact_name":"nome completo","contact_phone":"telefone ou null","contact_role":"cargo ou null","contact_company":"empresa ou null","note":"resumo curto e direto do contexto e do próximo passo, SEM citar o nome do remetente e SEM repetir o nome do contato (ex: 'Retomar o assunto do encantamento amanhã às 10h')","cadence_days":numero_ou_null}\n\n4) Só retorne {"action":"ignore"} se não houver nenhuma pessoa mencionada na mensagem.`
+    const userContent = `Mensagem de ${senderName}:\n"${messageText}"\n\n${lastCtx}\n\nResponda só com JSON no formato {"actions":[...]} contendo UMA ou MAIS ações, na ordem em que o usuário pediu (máximo 4). Tipos de ação:\n\n1) ALTERAR cadastro de um contato já existente (nome, cargo ou empresa). Também vale quando o usuário apenas INFORMA um fato que muda o cadastro, como "o Augusto também é fundador da Global Logistics" ou "a Ana agora trabalha na X". Isso NÃO é anotação:\n{"action":"update_contact","target_name":"nome ATUAL do contato como está cadastrado (se o usuário disser 'último', 'esse' ou 'este' cliente, use o nome do último contato registrado)","changes":[{"field":"name|role|company","op":"set|add|remove|clear","value":"texto ou null"}]}\nOperações: set = trocar o valor atual por outro (ex: agora trabalha na X, corrigir nome); add = ACRESCENTAR mantendo o que já existe (ex: TAMBÉM é diretor de outra empresa); remove = tirar só aquele item (ex: saiu da empresa X); clear = apagar o campo inteiro. Para name use somente set. Uma ação pode ter várias mudanças.\n\n2) APAGAR, EXCLUIR ou REMOVER um contato inteiro:\n{"action":"delete_contact","target_name":"nome do contato"}\n\n3) ANOTAÇÃO sobre uma pessoa (reunião, ligação, encontro, próximo passo):\n{"action":"note","contact_name":"nome completo","contact_phone":"telefone ou null","contact_role":"cargo ou null","contact_company":"empresa ou null","note":"resumo curto e direto do contexto e do próximo passo, SEM citar o nome do remetente e SEM repetir o nome do contato (ex: 'Retomar o assunto do encantamento amanhã às 10h')","cadence_days":numero_ou_null}\n\nRegras: se a mensagem só muda dados do cadastro, use apenas update_contact (sem note). Só inclua note junto se houver contexto além do dado cadastral. Se a mensagem tiver dois pedidos (ex: apagar um contato E ajustar outro), devolva as duas ações. Se não houver nenhuma pessoa mencionada, responda {"actions":[{"action":"ignore"}]}.`
 
     const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -361,14 +361,18 @@ serve(async (req) => {
     console.log('[ELOS] ===CLAUDE_RAW===', claudeRaw.slice(0, 500))
 
     let parsed: any = { action: 'ignore' }
+    let actionList: any[] = []
     try {
       const clean = claudeRaw.replace(/^```json?\n?/, '').replace(/\n?```$/, '').trim()
-      if (clean) parsed = JSON.parse(clean)
+      if (clean) {
+        const j = JSON.parse(clean)
+        actionList = Array.isArray(j?.actions) ? j.actions : (j && j.action ? [j] : [])
+      }
     } catch (e) {
       console.error('[ELOS] Claude parse falhou:', String(e), '| raw:', claudeRaw.slice(0, 200))
     }
 
-    console.log('[ELOS] ===CLAUDE_PARSED===', JSON.stringify(parsed))
+    console.log('[ELOS] ===CLAUDE_PARSED===', JSON.stringify(actionList))
 
     // ── Gestao de contatos pelo WhatsApp: alterar dados e apagar ────────────────
     const SEP = ' / '
@@ -415,13 +419,11 @@ serve(async (req) => {
       return { reply: `Não encontrei o contato ${targetName}.`, err: 'not_found' }
     }
 
-    if (parsed.action === 'update_contact') {
-      const changes: any[] = Array.isArray(parsed.changes) ? parsed.changes : []
-      const r = await resolveTarget(cleanVal(parsed.target_name))
-      if (!r.contact) {
-        await replyToUser(r.reply!)
-        return ok({ action: 'update_contact', error: r.err })
-      }
+    // Cada funcao devolve o texto de resposta (a mensagem final junta todas as respostas)
+    const doUpdate = async (act: any): Promise<string> => {
+      const changes: any[] = Array.isArray(act.changes) ? act.changes : []
+      const r = await resolveTarget(cleanVal(act.target_name))
+      if (!r.contact) return r.reply!
       const target = r.contact
 
       const fields: any = {}
@@ -437,10 +439,7 @@ serve(async (req) => {
           if ((next ?? null) !== (base ?? null)) fields[field] = next
         }
       }
-      if (Object.keys(fields).length === 0) {
-        await replyToUser('Nada para mudar: o cadastro já está assim.')
-        return ok({ action: 'update_contact', error: 'no_change' })
-      }
+      if (Object.keys(fields).length === 0) return `Nada para mudar em ${target.name}: o cadastro já está assim.`
 
       // nao deixa criar dois contatos com o mesmo nome sem querer
       if (fields.name && fields.name.toLowerCase() !== String(target.name).toLowerCase()) {
@@ -448,40 +447,52 @@ serve(async (req) => {
         const { data: clash } = await supabase.from('contacts').select('id')
           .eq('user_id', userId).ilike('name', safeNew).neq('id', target.id).limit(1)
         if (clash && clash.length > 0) {
-          await replyToUser(`Já existe outro contato chamado ${fields.name}. Para não duplicar, peça para apagar um dos dois e tente de novo.`)
-          return ok({ action: 'update_contact', error: 'name_clash' })
+          return `Já existe outro contato chamado ${fields.name}. Para não duplicar, peça para apagar um dos dois e tente de novo.`
         }
       }
 
       const { error: updErr } = await supabase.from('contacts').update(fields).eq('id', target.id).eq('user_id', userId)
       if (updErr) {
         console.error('[ELOS] ===ERRO_UPDATE_CONTATO===', JSON.stringify(updErr))
-        await replyToUser('Não consegui ajustar agora. Tenta de novo em instantes.')
-        return ok({ action: 'update_contact', error: 'update_failed' })
+        return `Não consegui ajustar ${target.name} agora. Tenta de novo em instantes.`
       }
 
       const label: any = { name: 'Nome', role: 'Cargo', company: 'Empresa' }
       const lines = Object.keys(fields).map((k) => `${label[k]}: ${target[k] ?? 'vazio'} → ${fields[k] ?? 'vazio'}`)
-      await replyToUser(`✏️ *Ajustado no Elos*\n${target.name}\n${lines.join('\n')}`)
-      return ok({ action: 'update_contact', contactId: target.id, updated: Object.keys(fields) })
+      return `✏️ *Ajustado no Elos*\n${target.name}\n${lines.join('\n')}`
     }
 
-    if (parsed.action === 'delete_contact') {
-      const targetName = cleanVal(parsed.target_name)
-      if (!targetName) {
-        await replyToUser('Qual contato apagar? Me diga o nome completo.')
-        return ok({ action: 'delete_contact', error: 'no_target' })
-      }
+    const doDelete = async (act: any): Promise<string> => {
+      const targetName = cleanVal(act.target_name)
+      if (!targetName) return 'Qual contato apagar? Me diga o nome completo.'
       const r = await resolveTarget(targetName)
-      if (!r.contact) {
-        await replyToUser(r.reply!)
-        return ok({ action: 'delete_contact', error: r.err })
-      }
+      if (!r.contact) return r.reply!
       const key = `pdel:${userId}:${r.contact.id}`
       await supabase.from('processed_messages').delete().like('msg_key', `pdel:${userId}:%`)
       await supabase.from('processed_messages').insert({ msg_key: key })
-      await replyToUser(`⚠️ Apagar *${r.contact.name}* e todo o histórico dele? Responda *SIM* para confirmar ou *NÃO* para cancelar. (vale por 10 minutos)`)
-      return ok({ action: 'delete_contact', pending: r.contact.id })
+      return `⚠️ Apagar *${r.contact.name}* e todo o histórico dele? Responda *SIM* para confirmar ou *NÃO* para cancelar. (vale por 10 minutos)`
+    }
+
+    // Executa as acoes na ordem pedida (ate 4). Apagar fica sempre pendente de confirmacao.
+    {
+      const replies: string[] = []
+      let noteAction: any = null
+      let deleteSeen = false
+      for (const act of actionList.slice(0, 4)) {
+        if (act?.action === 'update_contact') {
+          replies.push(await doUpdate(act))
+        } else if (act?.action === 'delete_contact') {
+          if (deleteSeen) replies.push('Só consigo apagar um contato por vez. Peça o outro depois da confirmação.')
+          else { deleteSeen = true; replies.push(await doDelete(act)) }
+        } else if (act?.action === 'note' && act.note && !noteAction) {
+          noteAction = act
+        }
+      }
+      if (replies.length > 0) await replyToUser(replies.join('\n\n'))
+      if (!noteAction) {
+        return ok({ action: replies.length > 0 ? 'managed' : 'ignored', handled: replies.length })
+      }
+      parsed = noteAction
     }
 
     if (parsed.action === 'ignore' || !parsed.note) {
