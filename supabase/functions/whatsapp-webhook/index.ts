@@ -264,7 +264,7 @@ serve(async (req) => {
     console.log('[ELOS] ===CLAUDE_INICIO=== apiKey_prefix:', apiKey.slice(0, 10) + '...' + ' len:' + apiKey.length)
 
     // Monta o conteúdo da mensagem (áudio já foi transcrito para messageText via Groq Whisper)
-    const userContent = `Mensagem de ${senderName}:\n"${messageText}"\n\nSe houver qualquer pessoa mencionada (reunião, ligação, encontro, contato), retorne:\n{"action":"note","contact_name":"nome completo","contact_phone":"telefone ou null","contact_role":"cargo ou null","contact_company":"empresa ou null","note":"resumo do contexto","cadence_days":numero_ou_null}\n\nSó retorne {"action":"ignore"} se não houver nenhuma pessoa mencionada na mensagem.`
+    const userContent = `Mensagem de ${senderName}:\n"${messageText}"\n\nSe houver qualquer pessoa mencionada (reunião, ligação, encontro, contato), retorne:\n{"action":"note","contact_name":"nome completo","contact_phone":"telefone ou null","contact_role":"cargo ou null","contact_company":"empresa ou null","note":"resumo curto e direto do contexto e do próximo passo, SEM citar o nome do remetente e SEM repetir o nome do contato (ex: 'Retomar o assunto do encantamento amanhã às 10h')","cadence_days":numero_ou_null}\n\nSó retorne {"action":"ignore"} se não houver nenhuma pessoa mencionada na mensagem.`
 
     const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -393,7 +393,7 @@ serve(async (req) => {
       `✅ *Registrado no Elos*`,
       `👤 ${parsed.contact_name || 'Contato'}`,
       `📝 ${parsed.note}`,
-      parsed.cadence_days ? `📅 Próximo contato em ${parsed.cadence_days} dias` : ''
+      parsed.cadence_days ? `📅 Próximo contato em ${parsed.cadence_days} ${Number(parsed.cadence_days) === 1 ? 'dia' : 'dias'}` : ''
     ].filter(Boolean).join('\n')
 
     const recipientPhone = senderPhone.startsWith('55') ? senderPhone : `55${senderPhone}`

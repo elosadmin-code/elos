@@ -57,6 +57,16 @@ async function sendWhatsApp(phone: string, message: string): Promise<boolean> {
   }
 }
 
+// Corta a anotacao no fim de uma palavra (nunca no meio) e fecha com reticencias
+function trimNote(text: string, max = 100): string {
+  const t = text.replace(/\s+/g, ' ').trim()
+  if (t.length <= max) return t
+  const cut = t.slice(0, max)
+  const lastSpace = cut.lastIndexOf(' ')
+  const base = (lastSpace > 40 ? cut.slice(0, lastSpace) : cut).replace(/[\s,;:.\-]+$/, '')
+  return base + '…'
+}
+
 function d1Message(name: string, role: string | null, company: string | null): string {
   const who = [role, company].filter(Boolean).join(', ')
   return (
@@ -159,8 +169,9 @@ serve(async (req) => {
             .limit(1)
             .maybeSingle()
           const note = (h?.notes ?? '').replace(/\s*\[msgid:[^\]]*\]/g, '').trim()
-          const short = note.length > 90 ? note.slice(0, 87) + '...' : note
-          lines.push(`${i + 1}. *${d.name}*, ${d.daysSince} dias sem contato${short ? `. Última vez: ${short}` : ''}`)
+          const short = trimNote(note)
+          const dias = d.daysSince === 1 ? 'dia' : 'dias'
+          lines.push(`${i + 1}. *${d.name}*, ${d.daysSince} ${dias} sem contato${short ? `. Última vez: ${short}` : ''}`)
         }
 
         const msg =
