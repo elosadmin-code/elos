@@ -31,18 +31,18 @@ serve(async (req) => {
     return new Response('ok', { headers: { 'Access-Control-Allow-Origin': '*' } })
   }
 
-  // Rejeitar verbos nao esperados
+  // Rejeitar verbos não esperados
   if (req.method !== 'POST') {
-    console.warn('[ELOS] Metodo nao permitido:', req.method)
+    console.warn('[ELOS] Método não permitido:', req.method)
     return new Response('Method not allowed', { status: 405 })
   }
 
-  // Validar token da Z-API (protecao contra requisicoes externas indevidas)
+  // Validar token da Z-API (proteção contra requisições externas indevidas)
   const expectedToken = Deno.env.get('ZAPI_CLIENT_TOKEN') || ''
   if (expectedToken) {
     const incomingToken = req.headers.get('client-token') || ''
     if (incomingToken !== expectedToken) {
-      console.warn('[ELOS] Token invalido rejeitado')
+      console.warn('[ELOS] Token inválido rejeitado')
       return new Response('Unauthorized', { status: 401 })
     }
   }
@@ -60,6 +60,22 @@ serve(async (req) => {
     // Extract unique message ID for deduplication (Z-API replays same body on reconnect)
     const msgId = body.id || raw.id || body.messageId || raw.messageId || body.message_id || ''
     console.log('[ELOS] messageId:', msgId)
+
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    )
+
+    // Reserva atomica da mensagem: so a primeira execucao consegue inserir a chave.
+    // Qualquer reenvio da Z-API (mesmo simultaneo) cai no erro 23505 e e descartado.
+    const claimMessage = async (key: string): Promise<boolean> => {
+      if (!key) return true
+      const { error } = await supabase.from('processed_messages').insert({ msg_key: key })
+      if (!error) return true
+      if (error.code === '23505') return false
+      console.error('[ELOS] claim falhou, seguindo sem trava:', JSON.stringify(error))
+      return true
+    }
 
     // Skip non-MESSAGE events (Z-API fires multiple events per message: received, read, delivered, etc.)
     const eventType = raw.messageEventType || raw.type || ''
@@ -145,6 +161,13 @@ serve(async (req) => {
         return ok({ skipped: 'audio_no_url' })
       }
 
+      // Trava anti-duplicidade ANTES de baixar e transcrever o audio
+      const audioKey = msgId || `${senderPhone}|${audioUrl}`
+      if (!(await claimMessage(audioKey))) {
+        console.log('[ELOS] Pulando: audio duplicado, key:', audioKey)
+        return ok({ skipped: 'duplicate_message', key: audioKey })
+      }
+
       try {
         // 1. Download do áudio
         const audioResp = await fetch(audioUrl)
@@ -191,10 +214,11 @@ serve(async (req) => {
       return ok({ skipped: 'no_text' })
     }
 
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-    )
+    // Texto: mesma trava (audio ja foi reservado acima)
+    if (messageType !== 'AUDIO' && msgId && !(await claimMessage(msgId))) {
+      console.log('[ELOS] Pulando: texto duplicado, msgId:', msgId)
+      return ok({ skipped: 'duplicate_message', msgId })
+    }
 
     // Normalize: try both with and without 55 country code
     const basePhone = senderPhone.replace(/^55/, '')  // e.g. 13997008988
