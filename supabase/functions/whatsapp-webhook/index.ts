@@ -263,8 +263,37 @@ serve(async (req) => {
 
     console.log('[ELOS] ===CLAUDE_INICIO=== apiKey_prefix:', apiKey.slice(0, 10) + '...' + ' len:' + apiKey.length)
 
+    // Ultimo contato registrado (para entender "ajusta o nome deste ultimo cliente")
+    const { data: lastHist } = await supabase
+      .from('contact_history')
+      .select('contact_id, contacts(id, name, role, company)')
+      .eq('user_id', userId)
+      .order('contacted_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    const lastContactRaw: any = lastHist?.contacts
+    const lastContact: any = Array.isArray(lastContactRaw) ? lastContactRaw[0] : lastContactRaw
+    const lastCtx = lastContact
+      ? `Último contato registrado: nome="${lastContact.name}", cargo="${lastContact.role ?? ''}", empresa="${lastContact.company ?? ''}".`
+      : 'Ainda não há contato registrado.'
+
+    // Responde ao usuario pela API Omni (mesmo caminho da confirmacao padrao)
+    const replyToUser = async (text: string): Promise<boolean> => {
+      const secret = Deno.env.get('ZAPI_SECRET_KEY') || ''
+      if (!channelId || !secret) return false
+      const to = senderPhone.startsWith('55') ? senderPhone : `55${senderPhone}`
+      try {
+        const r = await fetch(`https://api.omni.z-api.io/v1/channels/${channelId}/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${secret}` },
+          body: JSON.stringify({ recipient: { identifier: to }, content: { type: 'TEXT', body: { message: text } } })
+        })
+        return r.ok
+      } catch (_e) { return false }
+    }
+
     // Monta o conteúdo da mensagem (áudio já foi transcrito para messageText via Groq Whisper)
-    const userContent = `Mensagem de ${senderName}:\n"${messageText}"\n\nSe houver qualquer pessoa mencionada (reunião, ligação, encontro, contato), retorne:\n{"action":"note","contact_name":"nome completo","contact_phone":"telefone ou null","contact_role":"cargo ou null","contact_company":"empresa ou null","note":"resumo curto e direto do contexto e do próximo passo, SEM citar o nome do remetente e SEM repetir o nome do contato (ex: 'Retomar o assunto do encantamento amanhã às 10h')","cadence_days":numero_ou_null}\n\nSó retorne {"action":"ignore"} se não houver nenhuma pessoa mencionada na mensagem.`
+    const userContent = `Mensagem de ${senderName}:\n"${messageText}"\n\n${lastCtx}\n\nSe a mensagem pedir para CORRIGIR, AJUSTAR ou ALTERAR dados de um contato já cadastrado (nome, sobrenome, cargo ou empresa), isso NÃO é uma anotação. Retorne:\n{"action":"update_contact","target_name":"nome ATUAL do contato exatamente como está cadastrado (se o usuário disser 'último', 'esse' ou 'este' cliente, use o nome do último contato registrado)","new_name":"novo nome completo ou null","new_role":"novo cargo ou null","new_company":"nova empresa ou null"}\n\nCaso contrário, se houver qualquer pessoa mencionada (reunião, ligação, encontro, contato), retorne:\n{"action":"note","contact_name":"nome completo","contact_phone":"telefone ou null","contact_role":"cargo ou null","contact_company":"empresa ou null","note":"resumo curto e direto do contexto e do próximo passo, SEM citar o nome do remetente e SEM repetir o nome do contato (ex: 'Retomar o assunto do encantamento amanhã às 10h')","cadence_days":numero_ou_null}\n\nSó retorne {"action":"ignore"} se não houver nenhuma pessoa mencionada na mensagem.`
 
     const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -303,6 +332,73 @@ serve(async (req) => {
     }
 
     console.log('[ELOS] ===CLAUDE_PARSED===', JSON.stringify(parsed))
+
+    // ── Corrigir dados de um contato ja cadastrado (nome, cargo, empresa) ──────
+    if (parsed.action === 'update_contact') {
+      const clean = (v: any): string | null => {
+        if (typeof v !== 'string') return null
+        const t = v.trim()
+        return t && t.toLowerCase() !== 'null' && t.length <= 120 ? t : null
+      }
+      const newName = clean(parsed.new_name)
+      const newRole = clean(parsed.new_role)
+      const newCompany = clean(parsed.new_company)
+      const targetName = clean(parsed.target_name)
+
+      if (!newName && !newRole && !newCompany) {
+        await replyToUser('Não entendi o que ajustar. Me diga o contato e o que mudar, por exemplo: "ajusta o nome do Marcos para Márcio".')
+        return ok({ action: 'update_contact', error: 'no_fields' })
+      }
+
+      // 1) acha o contato alvo (sempre restrito ao dono da conta)
+      let target: any = null
+      if (lastContact && (!targetName || targetName.toLowerCase() === String(lastContact.name).toLowerCase())) {
+        target = lastContact
+      } else if (targetName) {
+        const safe = targetName.replace(/[%_\\]/g, (m) => '\\' + m)
+        const { data: found } = await supabase.from('contacts').select('id, name, role, company')
+          .eq('user_id', userId).ilike('name', safe).order('created_at', { ascending: false }).limit(5)
+        if (found && found.length === 1) target = found[0]
+        else if (found && found.length > 1) {
+          await replyToUser(`Achei mais de um contato chamado ${targetName}. Me diga qual deles (por exemplo, pela empresa).`)
+          return ok({ action: 'update_contact', error: 'ambiguous' })
+        }
+      }
+      if (!target) {
+        await replyToUser(`Não encontrei o contato${targetName ? ' ' + targetName : ''} para ajustar.`)
+        return ok({ action: 'update_contact', error: 'not_found' })
+      }
+
+      // 2) evita criar nome duplicado sem querer
+      if (newName && newName.toLowerCase() !== String(target.name).toLowerCase()) {
+        const safeNew = newName.replace(/[%_\\]/g, (m) => '\\' + m)
+        const { data: clash } = await supabase.from('contacts').select('id')
+          .eq('user_id', userId).ilike('name', safeNew).neq('id', target.id).limit(1)
+        if (clash && clash.length > 0) {
+          await replyToUser(`Já existe outro contato chamado ${newName}. Para não duplicar, apague um dos dois no painel e peça de novo.`)
+          return ok({ action: 'update_contact', error: 'name_clash' })
+        }
+      }
+
+      // 3) aplica
+      const fields: any = {}
+      if (newName) fields.name = newName
+      if (newRole) fields.role = newRole
+      if (newCompany) fields.company = newCompany
+      const { error: updErr } = await supabase.from('contacts').update(fields).eq('id', target.id).eq('user_id', userId)
+      if (updErr) {
+        console.error('[ELOS] ===ERRO_UPDATE_CONTATO===', JSON.stringify(updErr))
+        await replyToUser('Não consegui ajustar agora. Tenta de novo em instantes.')
+        return ok({ action: 'update_contact', error: 'update_failed' })
+      }
+
+      const changes: string[] = []
+      if (newName) changes.push(`Nome: ${target.name} → ${newName}`)
+      if (newRole) changes.push(`Cargo: ${target.role ?? 'vazio'} → ${newRole}`)
+      if (newCompany) changes.push(`Empresa: ${target.company ?? 'vazio'} → ${newCompany}`)
+      await replyToUser(`✏️ *Ajustado no Elos*\n${changes.join('\n')}`)
+      return ok({ action: 'update_contact', contactId: target.id, updated: Object.keys(fields) })
+    }
 
     if (parsed.action === 'ignore' || !parsed.note) {
       console.log('[ELOS] ===IGNORADO=== action:', parsed.action, 'note:', parsed.note)
