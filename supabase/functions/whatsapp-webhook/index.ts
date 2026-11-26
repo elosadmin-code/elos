@@ -58,7 +58,7 @@ serve(async (req) => {
     console.log('[ELOS] messageEventType:', raw.messageEventType)
 
     // Extract unique message ID for deduplication (Z-API replays same body on reconnect)
-    const msgId = body.id || raw.id || body.messageId || raw.messageId || body.message_id || ''
+    const msgId = body._id || body.id || raw._id || raw.id || body.messageId || raw.messageId || body.message_id || (Array.isArray(body.contents) && body.contents[0]?.identifier) || ''
     console.log('[ELOS] messageId:', msgId)
 
     const supabase = createClient(
