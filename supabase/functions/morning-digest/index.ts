@@ -1,7 +1,9 @@
 // morning-digest — Elos
 // Roda todo dia 7h30 (Brasilia) via pg_cron. Envia por WhatsApp:
-//   1) D+1: um lembrete para cada contato cadastrado ontem
-//   2) Briefing: contatos com cadencia vencida (last_contacted_at + interval_days <= agora)
+// UMA mensagem por usuario por manha, com:
+//   1) D+1: quem foi cadastrado ontem + pergunta do proximo passo (resposta em frase natural)
+//   2) Retomadas: contatos com cadencia vencida (last_contacted_at + interval_days <= agora)
+// Sem menu numerico: o usuario responde por texto ou audio ("me lembra do Fulano em 3 dias").
 // Idempotente: usa a tabela processed_messages como trava (uma chave por envio).
 // Deploy: supabase functions deploy morning-digest --no-verify-jwt --project-ref hiwrscxyclsovfbnzmwn
 
@@ -67,16 +69,16 @@ function trimNote(text: string, max = 100): string {
   return base + '…'
 }
 
-function d1Message(name: string, role: string | null, company: string | null): string {
-  const who = [role, company].filter(Boolean).join(', ')
-  return (
-    `Bom dia! Elos aqui.\n\n` +
-    `Ontem você cadastrou *${name}*${who ? ` (${who})` : ''}.\n\n` +
-    `Qual é o próximo passo com essa pessoa?\n\n` +
-    `1️⃣ Me ajuda a escrever a mensagem agora\n` +
-    `2️⃣ Me lembra em 3 dias\n` +
-    `3️⃣ Já cuidei disso`
-  )
+const MAX_FRESH = 5
+const MAX_DUE = 8
+
+function firstName(full: string): string {
+  return (full || '').trim().split(/\s+/)[0] || full
+}
+
+function who(role: string | null, company: string | null): string {
+  const w = [role, company].filter(Boolean).join(', ')
+  return w ? ` (${w})` : ''
 }
 
 serve(async (req) => {
@@ -114,26 +116,16 @@ serve(async (req) => {
       const phone = profile.whatsapp_number as string
       if (!phone) continue
 
-      // ── 1. D+1: contatos cadastrados ontem ──────────────────────────────
-      const { data: fresh } = await supabase
+      // ── Quem foi cadastrado ontem ─────────────────────────────────────────
+      const { data: freshAll } = await supabase
         .from('contacts')
         .select('id, name, role, company')
         .eq('user_id', userId)
         .gte('created_at', yStart)
         .lt('created_at', yEnd)
+        .order('created_at', { ascending: true })
 
-      for (const c of fresh ?? []) {
-        if (!(await claim(`d1:${c.id}`))) { skipped++; continue }
-        const ok = await sendWhatsApp(phone, d1Message(c.name, c.role, c.company))
-        if (ok) sent++
-        else {
-          failed++
-          // libera a chave para uma nova tentativa na proxima execucao
-          await supabase.from('processed_messages').delete().eq('msg_key', `d1:${c.id}`)
-        }
-      }
-
-      // ── 2. Briefing: cadencias vencidas ─────────────────────────────────
+      // ── Cadencias vencidas ────────────────────────────────────────────────
       const { data: cads } = await supabase
         .from('cadences')
         .select('contact_id, interval_days, last_contacted_at, contacts(name)')
@@ -152,15 +144,47 @@ serve(async (req) => {
         })
         .filter((c) => c.overdue)
         .sort((a, b) => b.daysSince - a.daysSince)
-        .slice(0, 8) // limite para o briefing nao virar um textao
 
-      if (due.length > 0) {
-        if (!(await claim(`digest:${userId}:${today}`))) { skipped++; continue }
+      if ((freshAll ?? []).length === 0 && due.length === 0) continue
 
-        // ultima anotacao de cada contato vencido
+      // Uma trava por usuario por dia: nunca manda duas mensagens na mesma manha
+      const digestKey = `digest:${userId}:${today}`
+      if (!(await claim(digestKey))) { skipped++; continue }
+
+      // Cada cadastrado de ontem tem a sua trava (D+1 so acontece uma vez por contato)
+      const claimedFresh: any[] = []
+      for (const c of freshAll ?? []) {
+        if (await claim(`d1:${c.id}`)) claimedFresh.push(c)
+      }
+
+      // Quem ja foi avisado no D+1 nao precisa aparecer de novo como atrasado hoje
+      const dueShown = due.filter((d) => !claimedFresh.some((f) => f.id === d.contactId)).slice(0, MAX_DUE)
+
+      if (claimedFresh.length === 0 && dueShown.length === 0) {
+        await supabase.from('processed_messages').delete().eq('msg_key', digestKey)
+        skipped++
+        continue
+      }
+
+      const parts: string[] = [`Bom dia! Elos aqui.`]
+
+      if (claimedFresh.length > 0) {
+        const shown = claimedFresh.slice(0, MAX_FRESH)
+        const extra = claimedFresh.length - shown.length
+        const list = shown.map((c) => `• *${c.name}*${who(c.role, c.company)}`).join('\n')
+        const e1 = firstName(shown[0].name)
+        const e2 = firstName((shown[1] ?? shown[0]).name)
+        parts.push(
+          `Ontem você cadastrou:\n${list}${extra > 0 ? `\ne mais ${extra}` : ''}`,
+          `Qual é o próximo passo? Me diga por texto ou áudio, por exemplo:\n` +
+          `"me lembra do ${e1} em 3 dias"\n` +
+          `"me ajuda a escrever pra ${e2}"`
+        )
+      }
+
+      if (dueShown.length > 0) {
         const lines: string[] = []
-        for (let i = 0; i < due.length; i++) {
-          const d = due[i]
+        for (const d of dueShown) {
           const { data: h } = await supabase
             .from('contact_history')
             .select('notes')
@@ -168,23 +192,28 @@ serve(async (req) => {
             .order('contacted_at', { ascending: false })
             .limit(1)
             .maybeSingle()
-          const note = (h?.notes ?? '').replace(/\s*\[msgid:[^\]]*\]/g, '').trim()
+          const note = (h?.notes ?? '').replace(/\s*\[msgid:[^\]]*\]/g, '').replace(/\s*\[ZAPI:[^\]]*\]/g, '').trim()
           const short = trimNote(note)
           const dias = d.daysSince === 1 ? 'dia' : 'dias'
-          lines.push(`${i + 1}. *${d.name}*, ${d.daysSince} ${dias} sem contato${short ? `. Última vez: ${short}` : ''}`)
+          lines.push(`• *${d.name}*, ${d.daysSince} ${dias} sem contato${short ? `. Última vez: ${short}` : ''}`)
         }
+        parts.push(
+          `${dueShown.length === 1 ? 'Pedindo retomada hoje:' : `${dueShown.length} relações pedindo retomada hoje:`}\n${lines.join('\n')}`
+        )
+        if (claimedFresh.length === 0) {
+          parts.push(`Quer ajuda? Diga, por exemplo: "me ajuda a escrever pra ${firstName(dueShown[0].name)}".`)
+        }
+      }
 
-        const msg =
-          `Bom dia! Elos aqui.\n\n` +
-          `Hoje ${due.length === 1 ? 'tem 1 relação' : `tem ${due.length} relações`} pedindo retomada:\n\n` +
-          lines.join('\n') +
-          `\n\nQuer ajuda para redigir alguma mensagem? Responde com o número.`
-
-        const ok = await sendWhatsApp(phone, msg)
-        if (ok) sent++
-        else {
-          failed++
-          await supabase.from('processed_messages').delete().eq('msg_key', `digest:${userId}:${today}`)
+      const ok = await sendWhatsApp(phone, parts.join('\n\n'))
+      if (ok) {
+        sent++
+      } else {
+        failed++
+        // libera todas as travas para nova tentativa na proxima execucao
+        await supabase.from('processed_messages').delete().eq('msg_key', digestKey)
+        for (const c of claimedFresh) {
+          await supabase.from('processed_messages').delete().eq('msg_key', `d1:${c.id}`)
         }
       }
     }
