@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none" role="img" aria-label="elos app icon">
+  <rect x="0" y="0" width="128" height="128" rx="30" fill="#183A30" />
+  <g transform="translate(18.92, 3.28) scale(0.92)" fill="#B69A65" fill-rule="evenodd">
+    <path d="M 86 69 L 27.5 69 C 29 79.5 37.5 86 49.5 86 C 58.2 86 64.8 82.6 69.2 77.2 L 81.8 84.5 C 74.8 93.4 63.4 98.5 49 98.5 C 26.8 98.5 12 83.8 12 66 C 12 48.2 26.6 33.5 49.2 33.5 C 71.2 33.5 86 47.8 86 65.5 C 86 66.8 86 67.9 86 69 Z M 27.8 58.5 L 70.4 58.5 C 68.6 49.5 60.4 44.8 49.2 44.8 C 38.2 44.8 29.8 49.6 27.8 58.5 Z" />
+  </g>
+</svg>

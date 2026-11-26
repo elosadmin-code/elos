@@ -28,26 +28,6 @@
   ],
   "rewrites": [
     {
-      "source": "/",
-      "has": [
-        {
-          "type": "host",
-          "value": "useelos.com"
-        }
-      ],
-      "destination": "/useelos/index.html"
-    },
-    {
-      "source": "/",
-      "has": [
-        {
-          "type": "host",
-          "value": "www.useelos.com"
-        }
-      ],
-      "destination": "/useelos/index.html"
-    },
-    {
       "source": "/useelos",
       "destination": "/useelos/index.html"
     }
