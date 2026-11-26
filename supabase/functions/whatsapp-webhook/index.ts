@@ -405,9 +405,71 @@ serve(async (req) => {
       }
     }
 
+    // ── Escolha entre contatos homonimos ("tenho 3 Felipe aqui, qual deles?") ──
+    // O pedido original fica guardado 10 min em processed_messages (chave pick:<usuario>:<base64>).
+    // A resposta pode ser o numero da lista ou um trecho do nome, cargo ou empresa.
+    const fmtPick = (c: any): string => {
+      const extra = [c.role, c.company].filter(Boolean).join(', ')
+      return extra ? `${c.name} (${extra})` : String(c.name)
+    }
+    let pickAct: any = null
+    let pickContact: any = null
+    {
+      const sincePick = new Date(Date.now() - 10 * 60 * 1000).toISOString()
+      const prefix = `pick:${userId}:`
+      const { data: pk } = await supabase.from('processed_messages').select('msg_key')
+        .like('msg_key', `${prefix}%`).gte('created_at', sincePick).order('created_at', { ascending: false }).limit(1)
+      if (pk && pk.length > 0) {
+        let payload: any = null
+        try {
+          const bin = atob(String(pk[0].msg_key).slice(prefix.length))
+          payload = JSON.parse(new TextDecoder().decode(Uint8Array.from(bin, (ch) => ch.charCodeAt(0))))
+        } catch (_e) { payload = null }
+        const kk = (v: any): string => String(v ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+          .replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim()
+        const raw = kk(messageText)
+        if (payload && Array.isArray(payload.ids) && payload.a) {
+          if (['nao', 'cancela', 'cancelar', 'deixa', 'deixa pra la', 'esquece', 'esquece isso'].includes(raw)) {
+            await supabase.from('processed_messages').delete().like('msg_key', `${prefix}%`)
+            await replyToUser('Ok, deixei pra lá.')
+            return ok({ action: 'pick', cancelled: true })
+          }
+          const { data: cands } = await supabase.from('contacts').select('id, name, role, company')
+            .eq('user_id', userId).in('id', payload.ids)
+          const ordered = (payload.ids as string[]).map((id) => (cands ?? []).find((c: any) => c.id === id)).filter(Boolean) as any[]
+          const words = raw.split(' ').filter(Boolean)
+          let chosen: any = null
+          const mNum = raw.match(/^(?:o |a |numero |n )?(\d{1,2})$/)
+          if (mNum) {
+            const i = Number(mNum[1])
+            if (i >= 1 && i <= ordered.length) chosen = ordered[i - 1]
+          } else if (words.length >= 1 && words.length <= 6) {
+            const stop = new Set(['o', 'a', 'os', 'as', 'um', 'uma', 'da', 'do', 'de', 'das', 'dos', 'e', 'eh', 'pelo', 'pela', 'esse', 'essa', 'este', 'esta', 'aquele', 'aquela', 'que', 'ele', 'ela', 'mesmo'])
+            const toks = words.filter((w) => !stop.has(w))
+            if (toks.length > 0) {
+              const hits = ordered.filter((c) => {
+                const hay = kk(`${c.name} ${c.role ?? ''} ${c.company ?? ''}`)
+                return toks.every((t) => hay.includes(t))
+              })
+              if (hits.length === 1) chosen = hits[0]
+              else if (hits.length > 1) {
+                await replyToUser(`Ainda tenho ${hits.length} possibilidades. Qual deles?\n${hits.map((c, i) => `${i + 1}. ${fmtPick(c)}`).join('\n')}\n\nResponda com a empresa ou o nome completo.`)
+                return ok({ action: 'pick', still_ambiguous: true })
+              }
+            }
+          }
+          if (chosen) {
+            await supabase.from('processed_messages').delete().like('msg_key', `${prefix}%`)
+            pickAct = payload.a
+            pickContact = chosen
+          }
+        }
+      }
+    }
+
     // Mensagem curta demais para ser um registro (ex: "1", "ok"). Numero solto recebe uma dica;
     // o resto e ignorado em silencio para nao virar conversa de robo.
-    if (messageText.trim().length < 3) {
+    if (!pickAct && messageText.trim().length < 3) {
       if (/^\d{1,2}$/.test(messageText.trim())) {
         await replyToUser('Por aqui eu entendo frases, por texto ou áudio. Por exemplo: "me lembra do Felipe em 3 dias" ou "me ajuda a escrever pra Chadi".')
       }
@@ -417,6 +479,9 @@ serve(async (req) => {
     // Monta o conteúdo da mensagem (áudio já foi transcrito para messageText via Groq Whisper)
     const userContent = `Mensagem de ${senderName}:\n"${messageText}"\n\n${lastCtx}\n\nResponda só com JSON no formato {"actions":[...]} contendo UMA ou MAIS ações, na ordem em que o usuário pediu (máximo 4). Tipos de ação:\n\n1) ALTERAR cadastro de um contato já existente (nome, cargo ou empresa). Também vale quando o usuário apenas INFORMA um fato que muda o cadastro, como "o Augusto também é fundador da Global Logistics" ou "a Ana agora trabalha na X". Isso NÃO é anotação:\n{"action":"update_contact","target_name":"nome ATUAL do contato como está cadastrado (se o usuário disser 'último', 'esse' ou 'este' cliente, use o nome do último contato registrado)","changes":[{"field":"name|role|company","op":"set|add|remove|clear","value":"texto ou null"}]}\nOperações: set = trocar o valor atual por outro (ex: agora trabalha na X, corrigir nome); add = ACRESCENTAR mantendo o que já existe (ex: TAMBÉM é diretor de outra empresa); remove = tirar só aquele item (ex: saiu da empresa X); clear = apagar o campo inteiro. Para name use somente set. Uma ação pode ter várias mudanças. Escreva sempre o cargo em português (Founder vira Fundador, Director vira Diretor), com inicial maiúscula, e mantenha siglas como CEO e CFO.\n\n2) APAGAR, EXCLUIR ou REMOVER um contato inteiro:\n{"action":"delete_contact","target_name":"nome do contato"}\n\n3) ANOTAÇÃO sobre uma pessoa (reunião, ligação, encontro, próximo passo):\n{"action":"note","contact_name":"nome completo","contact_phone":"telefone ou null","contact_role":"cargo ou null","contact_company":"empresa ou null","note":"resumo curto e direto do contexto e do próximo passo, SEM citar o nome do remetente e SEM repetir o nome do contato (ex: 'Retomar o assunto do encantamento amanhã às 10h')","cadence_days":numero_ou_null}\n\n4) LEMBRETE: o usuário pede para ser lembrado de retomar com alguém em um prazo (ex: "me lembra do Felipe em 3 dias", "daqui a uma semana", "todo mês"):\n{"action":"remind","target_name":"nome do contato","days":numero_de_dias}\nConverta o prazo em dias (semana=7, quinzena=15, mês=30). Para lembrete use remind e NÃO note.\n\n5) RASCUNHO: o usuário pede ajuda para escrever uma mensagem para alguém:\n{"action":"draft","target_name":"nome do contato","purpose":"objetivo da mensagem se o usuário disser, senão null"}\n\nRegras: se a mensagem só muda dados do cadastro, use apenas update_contact (sem note). Só inclua note junto se houver contexto além do dado cadastral. Se a mensagem tiver dois pedidos (ex: apagar um contato E ajustar outro), devolva as duas ações. Se não houver nenhuma pessoa mencionada, responda {"actions":[{"action":"ignore"}]}.`
 
+    let parsed: any = { action: 'ignore' }
+    let actionList: any[] = []
+    if (!pickAct) {
     const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -445,8 +510,6 @@ serve(async (req) => {
     const claudeRaw = textBlock?.text?.trim() ?? ''
     console.log('[ELOS] ===CLAUDE_RAW===', claudeRaw.slice(0, 500))
 
-    let parsed: any = { action: 'ignore' }
-    let actionList: any[] = []
     try {
       const clean = claudeRaw.replace(/^```json?\n?/, '').replace(/\n?```$/, '').trim()
       if (clean) {
@@ -457,10 +520,14 @@ serve(async (req) => {
       console.error('[ELOS] Claude parse falhou:', String(e), '| raw:', claudeRaw.slice(0, 200))
     }
 
+    }
+
     console.log('[ELOS] ===CLAUDE_PARSED===', JSON.stringify(actionList))
 
     // ── Gestao de contatos pelo WhatsApp: alterar dados e apagar ────────────────
     const SEP = ' / '
+    let forcedContact: any = null
+    let pickCreated = false
     const splitVals = (v: string | null | undefined): string[] =>
       (v ?? '').split(SEP).map((x) => x.trim()).filter(Boolean)
     const cleanVal = (v: any): string | null => {
@@ -505,30 +572,53 @@ serve(async (req) => {
       return current
     }
     // acha um contato do usuario pelo nome (ou o ultimo registrado)
-    const resolveTarget = async (targetName: string | null): Promise<{ contact?: any; reply?: string; err?: string }> => {
+    // Varios contatos com o mesmo nome: guarda o pedido e pergunta qual deles
+    const askWhich = async (name: string, list: any[], act: any): Promise<string> => {
+      const shown = name.charAt(0).toUpperCase() + name.slice(1)
+      if (list.length > 8) return `Tenho ${list.length} contatos com "${name}". Me diga o nome completo.`
+      if (pickCreated) return `Também tenho mais de um "${name}". Peça esse depois, com o nome completo.`
+      const a = { action: act?.action ?? null, target_name: act?.target_name ?? null, changes: act?.changes ?? null, days: act?.days ?? null, purpose: act?.purpose ?? null }
+      let key = ''
+      try {
+        const bytes = new TextEncoder().encode(JSON.stringify({ ids: list.map((c: any) => c.id), a }))
+        let bin = ''
+        for (const b of bytes) bin += String.fromCharCode(b)
+        key = `pick:${userId}:${btoa(bin)}`
+      } catch (_e) { key = '' }
+      if (!key || key.length > 1800) return `Tenho ${list.length} contatos com "${name}". Me diga o nome completo.`
+      await supabase.from('processed_messages').delete().like('msg_key', `pick:${userId}:%`)
+      const { error: pkErr } = await supabase.from('processed_messages').insert({ msg_key: key })
+      if (pkErr) return `Tenho ${list.length} contatos com "${name}". Me diga o nome completo.`
+      pickCreated = true
+      return `Tenho ${list.length} ${shown} aqui. Qual deles?\n${list.map((c: any, i: number) => `${i + 1}. ${fmtPick(c)}`).join('\n')}\n\nResponda com o número ou com a empresa.`
+    }
+
+    // acha um contato do usuario pelo nome (ou o ultimo registrado); se houver homonimos, pergunta qual
+    const resolveTarget = async (targetName: string | null, act?: any): Promise<{ contact?: any; reply?: string; err?: string }> => {
+      if (forcedContact) return { contact: forcedContact }
       if (lastContact && (!targetName || targetName.toLowerCase() === String(lastContact.name).toLowerCase())) {
         return { contact: lastContact }
       }
       if (!targetName) return { reply: 'Qual contato? Me diga o nome.', err: 'no_target' }
-      const safe = targetName.replace(/[%_\\]/g, (m) => '\\' + m)
-      let { data: found } = await supabase.from('contacts').select('id, name, role, company')
-        .eq('user_id', userId).ilike('name', safe).order('created_at', { ascending: false }).limit(5)
-      if (!found || found.length === 0) {
-        const r2 = await supabase.from('contacts').select('id, name, role, company')
-          .eq('user_id', userId).ilike('name', `%${safe}%`).order('created_at', { ascending: false }).limit(5)
-        found = r2.data
-      }
-      if (found && found.length === 1) return { contact: found[0] }
-      if (found && found.length > 1) {
-        return { reply: `Achei mais de um contato chamado ${targetName}. Me diga qual deles (por exemplo, pela empresa).`, err: 'ambiguous' }
-      }
+      const { data: all } = await supabase.from('contacts').select('id, name, role, company')
+        .eq('user_id', userId).order('created_at', { ascending: false }).limit(2000)
+      const people: any[] = all ?? []
+      const nk = (v: any): string => keyOf(String(v ?? '')).replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim()
+      const t = nk(targetName)
+      const tt = t.split(' ').filter(Boolean)
+      let found: any[] = []
+      if (tt.length > 1) found = people.filter((c) => nk(c.name) === t)
+      if (found.length === 0) found = people.filter((c) => { const nt = nk(c.name).split(' '); return tt.length > 0 && tt.every((w) => nt.some((x) => x.startsWith(w))) })
+      if (found.length === 0 && t) found = people.filter((c) => nk(c.name).includes(t))
+      if (found.length === 1) return { contact: found[0] }
+      if (found.length > 1) return { reply: await askWhich(targetName, found, act), err: 'ambiguous' }
       return { reply: `Não encontrei o contato ${targetName}.`, err: 'not_found' }
     }
 
     // Cada funcao devolve o texto de resposta (a mensagem final junta todas as respostas)
     const doUpdate = async (act: any): Promise<string> => {
       const changes: any[] = Array.isArray(act.changes) ? act.changes : []
-      const r = await resolveTarget(cleanVal(act.target_name))
+      const r = await resolveTarget(cleanVal(act.target_name), act)
       if (!r.contact) return r.reply!
       const target = r.contact
 
@@ -571,7 +661,7 @@ serve(async (req) => {
     const doDelete = async (act: any): Promise<string> => {
       const targetName = cleanVal(act.target_name)
       if (!targetName) return 'Qual contato apagar? Me diga o nome completo.'
-      const r = await resolveTarget(targetName)
+      const r = await resolveTarget(targetName, act)
       if (!r.contact) return r.reply!
       const key = `pdel:${userId}:${r.contact.id}`
       await supabase.from('processed_messages').delete().like('msg_key', `pdel:${userId}:%`)
@@ -585,7 +675,7 @@ serve(async (req) => {
       if (!Number.isFinite(days) || days < 1 || days > 365) {
         return 'Em quantos dias você quer que eu lembre? Por exemplo: "me lembra do Felipe em 3 dias".'
       }
-      const r = await resolveTarget(cleanVal(act.target_name))
+      const r = await resolveTarget(cleanVal(act.target_name), act)
       if (!r.contact) return r.reply!
       const nowIso = new Date().toISOString()
       const { data: cads } = await supabase.from('cadences').select('id')
@@ -603,7 +693,7 @@ serve(async (req) => {
 
     // "me ajuda a escrever pro Fulano": rascunho de mensagem com base no historico do contato
     const doDraft = async (act: any): Promise<string> => {
-      const r = await resolveTarget(cleanVal(act.target_name))
+      const r = await resolveTarget(cleanVal(act.target_name), act)
       if (!r.contact) return r.reply!
       const { data: full } = await supabase.from('contacts').select('name, role, company, whatsapp')
         .eq('id', r.contact.id).eq('user_id', userId).maybeSingle()
@@ -654,6 +744,8 @@ serve(async (req) => {
         return `Não consegui escrever o rascunho de ${nome} agora. Tenta de novo em instantes.`
       }
     }
+
+    if (pickAct) { forcedContact = pickContact; actionList = [pickAct] }
 
     // Executa as acoes na ordem pedida (ate 4). Apagar fica sempre pendente de confirmacao.
     {
