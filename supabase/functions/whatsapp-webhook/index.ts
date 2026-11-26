@@ -220,6 +220,27 @@ serve(async (req) => {
       return ok({ skipped: 'duplicate_message', msgId })
     }
 
+    // Segunda trava, independente do id da Z-API: o mesmo texto do mesmo remetente
+    // em ate 90 segundos conta como reenvio e e descartado.
+    if (messageType !== 'AUDIO' && messageText.trim().length >= 3) {
+      const norm = messageText.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim()
+      let h = 5381
+      for (let i = 0; i < norm.length; i++) h = ((h * 33) ^ norm.charCodeAt(i)) >>> 0
+      const txtKey = `txt:${senderPhone}:${h.toString(36)}:${norm.length}`
+      const { error: tErr } = await supabase.from('processed_messages').insert({ msg_key: txtKey })
+      if (tErr && tErr.code === '23505') {
+        const { data: old } = await supabase.from('processed_messages').select('created_at').eq('msg_key', txtKey).maybeSingle()
+        const age = old ? Date.now() - new Date(old.created_at).getTime() : 0
+        if (old && age <= 90 * 1000) {
+          console.log('[ELOS] Pulando: mesmo texto do mesmo remetente em menos de 90s')
+          return ok({ skipped: 'duplicate_text' })
+        }
+        // chave antiga: renova para valer de novo
+        await supabase.from('processed_messages').delete().eq('msg_key', txtKey)
+        await supabase.from('processed_messages').insert({ msg_key: txtKey })
+      }
+    }
+
     // Normalize: try both with and without 55 country code
     const basePhone = senderPhone.replace(/^55/, '')  // e.g. 13997008988
     const fullPhone = `55${basePhone}`                // e.g. 5513997008988
@@ -577,7 +598,10 @@ serve(async (req) => {
       const shown = name.charAt(0).toUpperCase() + name.slice(1)
       if (list.length > 8) return `Tenho ${list.length} contatos com "${name}". Me diga o nome completo.`
       if (pickCreated) return `Também tenho mais de um "${name}". Peça esse depois, com o nome completo.`
-      const a = { action: act?.action ?? null, target_name: act?.target_name ?? null, changes: act?.changes ?? null, days: act?.days ?? null, purpose: act?.purpose ?? null }
+      const a: any = { action: act?.action ?? null, target_name: act?.target_name ?? null, changes: act?.changes ?? null, days: act?.days ?? null, purpose: act?.purpose ?? null }
+      if (act?.action === 'note') {
+        for (const k of ['contact_name', 'contact_phone', 'contact_role', 'contact_company', 'note', 'cadence_days']) a[k] = act[k] ?? null
+      }
       let key = ''
       try {
         const bytes = new TextEncoder().encode(JSON.stringify({ ids: list.map((c: any) => c.id), a }))
@@ -799,9 +823,27 @@ serve(async (req) => {
       }
     }
 
+    if (!contactId && forcedContact) {
+      contactId = forcedContact.id
+      parsed.contact_name = forcedContact.name
+    }
+
     if (!contactId && parsed.contact_name) {
-      const { data: c } = await supabase.from('contacts').select('id,role,company').eq('user_id', userId)
-        .ilike('name', `%${parsed.contact_name}%`).maybeSingle()
+      const nk2 = (v: any): string => keyOf(String(v ?? '')).replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim()
+      const { data: allC } = await supabase.from('contacts').select('id, name, role, company')
+        .eq('user_id', userId).order('created_at', { ascending: false }).limit(2000)
+      const people2: any[] = allC ?? []
+      const t2 = nk2(parsed.contact_name)
+      const tt2 = t2.split(' ').filter(Boolean)
+      let found2: any[] = []
+      if (tt2.length > 1) found2 = people2.filter((x) => nk2(x.name) === t2)
+      if (found2.length === 0) found2 = people2.filter((x) => { const nt = nk2(x.name).split(' '); return tt2.length > 0 && tt2.every((w) => nt.some((y) => y.startsWith(w))) })
+      if (found2.length > 1) {
+        const ask = await askWhich(String(parsed.contact_name), found2, parsed)
+        await replyToUser(ask)
+        return ok({ action: 'note', pick: true })
+      }
+      const c = found2.length === 1 ? found2[0] : null
       if (c) {
         contactId = c.id
         // Enrich existing contact with role/company if not set yet
